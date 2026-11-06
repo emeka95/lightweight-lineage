@@ -1,0 +1,38 @@
+Metadata-Version: 2.4
+Name: lightweight-lineage
+Version: 0.1.0
+Summary: Offline repository scanning and data lineage
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: click<9,>=8.1
+Requires-Dist: jinja2<4,>=3.1
+Requires-Dist: sqlfluff<5,>=4.5
+Dynamic: license-file
+
+# Lightweight Lineage
+
+An offline tool for scanning repositories and generating data lineage.
+
+## Development setup
+
+Requires Python 3.12 or later.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+## Current command
+
+The current command parses T-SQL files and emits object-level lineage as JSON.
+Interactive HTML rendering and GUI support are not implemented yet.
+
+```powershell
+lineage scan path\to\repository --output lineage.json
+```
+
+The command defaults to a five-minute whole-scan timeout. `--timeout` overrides
+it in seconds. Repeated `--map ALIAS=TARGET` options supply explicit object
+mappings. Repeated `--var NAME=VALUE` options supply Jinja2 template values.
+Without `--output`, the lineage JSON is written to standard output.

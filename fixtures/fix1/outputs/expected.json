@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "run_status": "completed_with_warnings",
+  "objects": [
+    {
+      "id": "table:category",
+      "type": "table",
+      "name": "category",
+      "status": "declared",
+      "parse_status": "parsed",
+      "source_file": "tables/category.sql"
+    },
+    {
+      "id": "table:category_profitability",
+      "type": "table",
+      "name": "category_profitability",
+      "status": "declared",
+      "parse_status": "parsed",
+      "source_file": "tables/category_profitability.sql"
+    },
+    {
+      "id": "table:customers",
+      "type": "table",
+      "name": "customers",
+      "status": "declared",
+      "parse_status": "parsed",
+      "source_file": "tables/customers.sql"
+    },
+    {
+      "id": "table:line_items",
+      "type": "table",
+      "name": "line_items",
+      "status": "declared",
+      "parse_status": "parsed",
+      "source_file": "tables/line_items.sql"
+    },
+    {
+      "id": "table:orders",
+      "type": "table",
+      "name": "orders",
+      "status": "declared",
+      "parse_status": "parsed",
+      "source_file": "tables/orders.sql"
+    },
+    {
+      "id": "table:product",
+      "type": "table",
+      "name": "product",
+      "status": "declared",
+      "parse_status": "parsed",
+      "source_file": "tables/product.sql"
+    },
+    {
+      "id": "table:product_profitability",
+      "type": "table",
+      "name": "product_profitability",
+      "status": "declared",
+      "parse_status": "parsed",
+      "source_file": "tables/product_profitability.sql"
+    },
+    {
+      "id": "view:vw_category_profitability",
+      "type": "view",
+      "name": "vw_category_profitability",
+      "status": "declared",
+      "source_file": "views/vw_category_profitability.sql"
+    },
+    {
+      "id": "view:vw_customer_breakdown",
+      "type": "view",
+      "name": "vw_customer_breakdown",
+      "status": "declared",
+      "source_file": "views/vw_customer_breakdown.sql"
+    },
+    {
+      "id": "view:vw_product_profitability",
+      "type": "view",
+      "name": "vw_product_profitability",
+      "status": "declared",
+      "source_file": "views/vw_product_profitability.sql"
+    },
+    {
+      "id": "procedure:process_sales",
+      "type": "stored_procedure",
+      "name": "process_sales",
+      "status": "declared",
+      "source_file": "procs/process_sales.sql"
+    },
+    {
+      "id": "unknown:address",
+      "type": "relation",
+      "name": "address",
+      "status": "unknown",
+      "referenced_in": [
+        "views/vw_customer_breakdown.sql"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "table:category",
+      "target": "view:vw_category_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_category_profitability.sql"
+    },
+    {
+      "source": "table:line_items",
+      "target": "view:vw_category_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_category_profitability.sql"
+    },
+    {
+      "source": "table:orders",
+      "target": "view:vw_category_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_category_profitability.sql"
+    },
+    {
+      "source": "table:product",
+      "target": "view:vw_category_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_category_profitability.sql"
+    },
+    {
+      "source": "table:product",
+      "target": "view:vw_product_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_product_profitability.sql"
+    },
+    {
+      "source": "table:line_items",
+      "target": "view:vw_product_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_product_profitability.sql"
+    },
+    {
+      "source": "table:orders",
+      "target": "view:vw_product_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_product_profitability.sql"
+    },
+    {
+      "source": "unknown:address",
+      "target": "view:vw_customer_breakdown",
+      "kind": "data_flow",
+      "status": "unknown_source",
+      "evidence_file": "views/vw_customer_breakdown.sql"
+    },
+    {
+      "source": "table:customers",
+      "target": "view:vw_customer_breakdown",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_customer_breakdown.sql"
+    },
+    {
+      "source": "table:line_items",
+      "target": "view:vw_customer_breakdown",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_customer_breakdown.sql"
+    },
+    {
+      "source": "table:orders",
+      "target": "view:vw_customer_breakdown",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_customer_breakdown.sql"
+    },
+    {
+      "source": "table:product",
+      "target": "view:vw_customer_breakdown",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "evidence_file": "views/vw_customer_breakdown.sql"
+    },
+    {
+      "source": "view:vw_category_profitability",
+      "target": "table:category_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "via_procedure": "procedure:process_sales",
+      "evidence_file": "procs/process_sales.sql"
+    },
+    {
+      "source": "view:vw_product_profitability",
+      "target": "table:product_profitability",
+      "kind": "data_flow",
+      "status": "confirmed",
+      "via_procedure": "procedure:process_sales",
+      "evidence_file": "procs/process_sales.sql"
+    }
+  ],
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "unknown_relation",
+      "file": "views/vw_customer_breakdown.sql",
+      "message": "Relation 'address' is unresolved because no matching object is declared in the scanned repository."
+    }
+  ],
+  "notes": [
+    "Foreign-key declarations are schema relationships, not data-flow edges, so they are not included in the lineage graph."
+  ]
+}

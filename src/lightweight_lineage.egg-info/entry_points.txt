@@ -1,0 +1,2 @@
+[console_scripts]
+lineage = lightweight_lineage.cli:cli
