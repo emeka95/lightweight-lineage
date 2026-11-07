@@ -11,6 +11,18 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
+## Tests
+
+Run the unit tests and Python syntax check with:
+
+```powershell
+python -m unittest discover -s tests -v
+python -m compileall -q src tests
+```
+
+Continuous integration is configured to run these checks on Windows and macOS
+with Python 3.12.
+
 ## Current command
 
 The current command parses T-SQL files and emits object-level lineage as
