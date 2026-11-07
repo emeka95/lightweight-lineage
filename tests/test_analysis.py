@@ -4,9 +4,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from lightweight_lineage.analysis import analyze_repository
 from lightweight_lineage.options import ExplicitMapping, ScanOptions, TemplateVariable
+from lightweight_lineage.scanner import ScanTimeoutError
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
 
@@ -76,6 +79,44 @@ class RepositoryAnalysisTests(unittest.TestCase):
             },
         )
         self.assertEqual(actual["run_status"], expected["run_status"])
+
+    def test_timeout_after_a_parse_aborts_before_parsing_next_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "a.sql").write_text(
+                "CREATE TABLE dbo.first_table (id INT);",
+                encoding="utf-8",
+            )
+            (root / "b.sql").write_text(
+                "CREATE TABLE dbo.second_table (id INT);",
+                encoding="utf-8",
+            )
+            clock = [0.0]
+
+            def monotonic() -> float:
+                return clock[0]
+
+            def parse_string(source: str, *, fname: str) -> SimpleNamespace:
+                self.assertIn("CREATE TABLE", source)
+                self.assertEqual(fname, "a.sql")
+                clock[0] = 2.0
+                return SimpleNamespace(violations=[])
+
+            with patch(
+                "lightweight_lineage.scanner.time.monotonic",
+                side_effect=monotonic,
+            ):
+                with patch("lightweight_lineage.analysis.Linter") as linter_type:
+                    linter_type.return_value.parse_string.side_effect = parse_string
+                    with self.assertRaises(ScanTimeoutError):
+                        analyze_repository(
+                            ScanOptions(source=root, timeout_seconds=1)
+                        )
+
+            self.assertEqual(
+                linter_type.return_value.parse_string.call_count,
+                1,
+            )
 
     def test_ctes_and_nested_queries_only_emit_permanent_sources(self) -> None:
         graph = self.analyze_sql(

@@ -24,6 +24,24 @@ class ScanRepositoryTests(unittest.TestCase):
                 ("A.SQL", "nested/b.sql", "z.sql"),
             )
 
+    def test_discovers_thousands_of_files_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for index in range(1200):
+                directory = root / f"group_{index % 12:02}"
+                directory.mkdir(exist_ok=True)
+                (directory / f"model_{index:04}.sql").write_text(
+                    "SELECT 1;",
+                    encoding="utf-8",
+                )
+
+            first_scan = scan_repository(root)
+            second_scan = scan_repository(root)
+
+            self.assertEqual(len(first_scan), 1200)
+            self.assertEqual(first_scan, second_scan)
+            self.assertEqual(first_scan, tuple(sorted(first_scan, key=str.casefold)))
+
     def test_raises_instead_of_returning_partial_results_on_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

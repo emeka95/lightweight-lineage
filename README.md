@@ -11,12 +11,26 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
+## Tests
+
+Run the unit tests and Python syntax check with:
+
+```powershell
+python -m unittest discover -s tests -v
+python -m compileall -q src tests
+```
+
+Continuous integration is configured to run these checks on Windows and macOS
+with Python 3.12.
+
 ## Current command
 
 The current command parses T-SQL files and emits object-level lineage as
 deterministic JSON or a self-contained interactive HTML report. The HTML
 report works offline, with clickable upstream/downstream highlighting and a
-separate diagnostics panel.
+separate diagnostics panel. Procedure-attributed reads and writes are routed
+through procedure nodes in the diagram; unconnected procedure declarations
+are omitted.
 
 ```powershell
 lineage scan path\to\repository --format html
