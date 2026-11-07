@@ -73,6 +73,65 @@ def _compute_merge_groups(
     ]
 
 
+def _display_graph(
+    graph: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Expand procedure-attributed data flows for visualization only."""
+    objects = graph["objects"]
+    edges = graph["edges"]
+    object_ids = {item["id"] for item in objects}
+    procedure_ids = {
+        item["id"] for item in objects if item["type"] == "stored_procedure"
+    }
+    active_procedures = {
+        edge.get("via_procedure")
+        for edge in edges
+        if edge["kind"] == "data_flow"
+        and edge.get("via_procedure") in procedure_ids
+    }
+    for edge in edges:
+        if edge["kind"] == "procedure_call":
+            active_procedures.update(
+                endpoint
+                for endpoint in (edge["source"], edge["target"])
+                if endpoint in procedure_ids
+            )
+
+    display_objects = [
+        item
+        for item in objects
+        if item["type"] != "stored_procedure" or item["id"] in active_procedures
+    ]
+    display_ids = {item["id"] for item in display_objects}
+    display_edges: list[dict[str, Any]] = []
+    for edge in edges:
+        via_procedure = edge.get("via_procedure")
+        if (
+            edge["kind"] == "data_flow"
+            and via_procedure in active_procedures
+            and edge["source"] in object_ids
+            and edge["target"] in object_ids
+        ):
+            display_edges.extend(
+                (
+                    {
+                        **edge,
+                        "target": via_procedure,
+                        "kind": "procedure_input",
+                    },
+                    {
+                        **edge,
+                        "source": via_procedure,
+                        "kind": "procedure_output",
+                    },
+                )
+            )
+        elif edge["source"] in display_ids and edge["target"] in display_ids:
+            display_edges.append(edge)
+
+    return display_objects, display_edges
+
+
 def _compute_layout(
     graph: dict[str, Any],
 ) -> tuple[dict[str, dict[str, int]], int, int]:
@@ -209,12 +268,16 @@ def _script_json(value: Any) -> str:
 
 def render_html(graph: dict[str, Any]) -> str:
     """Render a deterministic, self-contained interactive lineage report."""
-    positions, width, height = _compute_layout(graph)
+    display_objects, display_edges = _display_graph(graph)
+    display_graph = {"objects": display_objects, "edges": display_edges}
+    positions, width, height = _compute_layout(display_graph)
     payload = {
         "graph": graph,
+        "displayObjects": display_objects,
+        "displayEdges": display_edges,
         "layout": {"positions": positions, "width": width, "height": height},
-        "edgePorts": _compute_edge_ports(graph["edges"]),
-        "mergeGroups": _compute_merge_groups(graph["edges"], set(positions)),
+        "edgePorts": _compute_edge_ports(display_edges),
+        "mergeGroups": _compute_merge_groups(display_edges, set(positions)),
         "nodeWidth": _NODE_WIDTH,
         "nodeHeight": _NODE_HEIGHT,
     }
@@ -288,6 +351,12 @@ h1 {{ margin: 0; font-size: 19px; letter-spacing: .01em; }}
 .edge-inferred {{ stroke-dasharray: 7 5; }}
 .edge-ambiguous {{ stroke: #c47b0b; stroke-dasharray: 4 4; }}
 .edge-unknown_source, .edge-unknown_target {{ stroke: #c2413b; stroke-dasharray: 2 4; }}
+.edge-procedure_input {{ stroke: #6b66a8; stroke-dasharray: 6 4; }}
+.edge-procedure_output {{ stroke: #327d64; stroke-width: 2.4; }}
+.edge-procedure_input.edge-inferred, .edge-procedure_output.edge-inferred {{ stroke-dasharray: 7 5; }}
+.edge-procedure_input.edge-ambiguous, .edge-procedure_output.edge-ambiguous {{ stroke: #c47b0b; stroke-dasharray: 4 4; }}
+.edge-procedure_input.edge-unknown_source, .edge-procedure_input.edge-unknown_target,
+.edge-procedure_output.edge-unknown_source, .edge-procedure_output.edge-unknown_target {{ stroke: #c2413b; stroke-dasharray: 2 4; }}
 .edge-merge {{ stroke: #71859a; stroke-width: 2.1; opacity: 1; }}
 .edge.selected-route {{ stroke: #155eef; stroke-width: 3; opacity: 1; }}
 .edge.dimmed {{ opacity: .12; }}
@@ -335,6 +404,8 @@ h2 {{ margin: 0 0 12px; color: #243b53; font-size: 14px; }}
 .legend-line.inferred {{ border-top-style: dashed; }}
 .legend-line.ambiguous {{ border-top: 2px dashed #c47b0b; }}
 .legend-line.unknown {{ border-top: 2px dotted #c2413b; }}
+.legend-line.procedure-input {{ border-top: 2px dashed #6b66a8; }}
+.legend-line.procedure-output {{ border-top: 2px solid #327d64; }}
 .legend-box {{ width: 12px; height: 12px; border: 1px solid #d08b11; border-radius: 3px; background: #fff8e8; }}
 .footer-note {{ margin-top: 14px; color: #71859a; font-size: 11px; line-height: 1.5; }}
 @media (max-width: 900px) {{
@@ -372,6 +443,8 @@ h2 {{ margin: 0 0 12px; color: #243b53; font-size: 14px; }}
     <span class="legend-item"><span class="legend-line inferred"></span>Inferred</span>
     <span class="legend-item"><span class="legend-line ambiguous"></span>Ambiguous</span>
     <span class="legend-item"><span class="legend-line unknown"></span>Unknown endpoint</span>
+    <span class="legend-item"><span class="legend-line procedure-input"></span>Procedure read/input</span>
+    <span class="legend-item"><span class="legend-line procedure-output"></span>Procedure write/output</span>
     <span class="legend-item"><span class="legend-box"></span>Unresolved object</span>
   </div>
 </div>
@@ -401,15 +474,17 @@ h2 {{ margin: 0 0 12px; color: #243b53; font-size: 14px; }}
 "use strict";
 const payload = JSON.parse(document.getElementById("lineage-data").textContent);
 const graph = payload.graph;
+const displayObjects = payload.displayObjects;
+const displayEdges = payload.displayEdges;
 const positions = payload.layout.positions;
 const edgePorts = payload.edgePorts;
 const svg = document.getElementById("graph");
 const objectDetails = document.getElementById("object-details");
 const diagnosticsRoot = document.getElementById("diagnostics");
-const nodeById = new Map(graph.objects.map((item) => [item.id, item]));
-const outgoing = new Map(graph.objects.map((item) => [item.id, []]));
-const incoming = new Map(graph.objects.map((item) => [item.id, []]));
-for (const edge of graph.edges) {{
+const nodeById = new Map(displayObjects.map((item) => [item.id, item]));
+const outgoing = new Map(displayObjects.map((item) => [item.id, []]));
+const incoming = new Map(displayObjects.map((item) => [item.id, []]));
+for (const edge of displayEdges) {{
   if (outgoing.has(edge.source) && incoming.has(edge.target)) {{
     outgoing.get(edge.source).push(edge);
     incoming.get(edge.target).push(edge);
@@ -438,8 +513,14 @@ function svgElement(tag, attributes = {{}}) {{
   return element;
 }}
 function displayType(value) {{ return String(value || "object").replace(/_/g, " "); }}
-function edgeClass(status) {{
-  return "edge edge-" + String(status || "confirmed").replace(/[^a-z0-9_-]/gi, "-");
+function edgeClass(edge) {{
+  return "edge edge-" + String(edge.status || "confirmed").replace(/[^a-z0-9_-]/gi, "-") +
+    " edge-" + String(edge.kind || "data_flow").replace(/[^a-z0-9_-]/gi, "-");
+}}
+function edgeDescription(edge) {{
+  if (edge.kind === "procedure_input") return `Read by procedure: ${{edge.source}} → ${{edge.target}}`;
+  if (edge.kind === "procedure_output") return `Written by procedure: ${{edge.source}} → ${{edge.target}}`;
+  return `${{edge.kind}}: ${{edge.source}} → ${{edge.target}}`;
 }}
 function makeEdgePath(edge, edgeIndex) {{
   const source = positions[edge.source];
@@ -471,14 +552,14 @@ function renderGraph() {{
   defs.append(marker);
   svg.append(defs);
   const edgeLayer = svgElement("g", {{ "aria-label": "Relationships" }});
-  for (const [edgeIndex, edge] of graph.edges.entries()) {{
+  for (const [edgeIndex, edge] of displayEdges.entries()) {{
     if (!positions[edge.source] || !positions[edge.target]) continue;
     const path = svgElement("path", {{
-      d: makeEdgePath(edge, edgeIndex), class: edgeClass(edge.status),
+      d: makeEdgePath(edge, edgeIndex), class: edgeClass(edge),
       "data-source": edge.source, "data-target": edge.target
     }});
     const title = svgElement("title");
-    title.textContent = `${{edge.kind}}: ${{edge.source}} → ${{edge.target}} (${{edge.status}}) — ${{edge.evidence_file}}:${{edge.line}}`;
+    title.textContent = `${{edgeDescription(edge)}} (${{edge.status}}) — ${{edge.evidence_file}}:${{edge.line}}`;
     path.append(title);
     edgeLayer.append(path);
     edgeElements.push({{element: path, edge}});
@@ -490,7 +571,7 @@ function renderGraph() {{
     const centerY = target.y + payload.nodeHeight / 2;
     const junctionX = target.x - mergeOffset;
     const arrowX = target.x - arrowClearance;
-    const edges = group.edgeIndices.map((index) => graph.edges[index]);
+    const edges = group.edgeIndices.map((index) => displayEdges[index]);
     const path = svgElement("path", {{
       d: `M ${{junctionX}} ${{centerY}} L ${{arrowX}} ${{centerY}}`,
       class: "edge edge-merge",
@@ -506,7 +587,7 @@ function renderGraph() {{
   }}
   svg.append(mergeLayer);
   const nodeLayer = svgElement("g", {{ "aria-label": "Objects" }});
-  const orderedObjects = [...graph.objects].sort((a, b) =>
+  const orderedObjects = [...displayObjects].sort((a, b) =>
     positions[a.id].rank - positions[b.id].rank ||
     positions[a.id].y - positions[b.id].y ||
     compareText(a.id, b.id)
@@ -541,8 +622,8 @@ function renderGraph() {{
     nodeElements.set(object.id, group);
   }}
   svg.append(nodeLayer);
-  document.getElementById("empty-state").hidden = graph.objects.length !== 0;
-  svg.hidden = graph.objects.length === 0;
+  document.getElementById("empty-state").hidden = displayObjects.length !== 0;
+  svg.hidden = displayObjects.length === 0;
 }}
 function reachable(startId, direction) {{
   const adjacency = direction === "upstream" ? incoming : outgoing;
@@ -675,7 +756,7 @@ function renderDiagnostics() {{
   status.dataset.status = graph.run_status;
   status.textContent = displayType(graph.run_status).replace(/^./, (letter) => letter.toUpperCase());
   document.getElementById("graph-stats").textContent =
-    `${{graph.objects.length}} objects · ${{graph.edges.length}} relationships · ${{graph.diagnostics.length}} diagnostics`;
+    `${{displayObjects.length}} objects · ${{displayEdges.length}} relationships · ${{graph.diagnostics.length}} diagnostics`;
   const diagnostics = [...graph.diagnostics].sort((a, b) =>
     compareText(a.file || "", b.file || "") ||
     (a.line || 0) - (b.line || 0) ||
@@ -718,7 +799,7 @@ document.getElementById("search-form").addEventListener("submit", (event) => {{
   searchTerm = input.value.trim().toLocaleLowerCase();
   updateHighlights();
   if (!searchTerm) return;
-  const match = graph.objects.find((object) =>
+  const match = displayObjects.find((object) =>
     (object.name + " " + object.type).toLocaleLowerCase().includes(searchTerm)
   );
   if (match) selectObject(match.id, true);
@@ -733,7 +814,7 @@ document.getElementById("clear-selection").addEventListener("click", () => {{
   updateHighlights();
 }});
 const options = document.getElementById("object-options");
-for (const object of graph.objects) {{
+for (const object of displayObjects) {{
   const option = document.createElement("option");
   option.value = object.name;
   option.label = displayType(object.type);

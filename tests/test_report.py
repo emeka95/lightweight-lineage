@@ -6,6 +6,7 @@ import unittest
 from typing import Any
 
 from lightweight_lineage.report import (
+    _display_graph,
     _compute_edge_ports,
     _compute_layout,
     _compute_merge_groups,
@@ -149,6 +150,123 @@ class LineageReportTests(unittest.TestCase):
         self.assertGreater(positions["view:c"]["rank"], positions["view:b"]["rank"])
         self.assertEqual(positions["unknown:lonely"]["rank"], 0)
         self.assertEqual(set(positions), {item["id"] for item in graph["objects"]})
+
+    def test_procedure_flows_expand_without_mutating_the_logical_graph(self) -> None:
+        graph = {
+            "objects": [
+                {"id": "view:source", "type": "view", "name": "source", "status": "declared"},
+                {"id": "table:target", "type": "table", "name": "target", "status": "declared"},
+                {"id": "table:ordinary", "type": "table", "name": "ordinary", "status": "declared"},
+                {"id": "procedure:load", "type": "stored_procedure", "name": "load", "status": "declared"},
+                {"id": "procedure:caller", "type": "stored_procedure", "name": "caller", "status": "declared"},
+                {"id": "procedure:unused", "type": "stored_procedure", "name": "unused", "status": "declared"},
+            ],
+            "edges": [
+                {
+                    "source": "view:source",
+                    "target": "table:target",
+                    "kind": "data_flow",
+                    "status": "confirmed",
+                    "evidence_file": "load.sql",
+                    "line": 8,
+                    "via_procedure": "procedure:load",
+                },
+                {
+                    "source": "view:source",
+                    "target": "table:ordinary",
+                    "kind": "data_flow",
+                    "status": "inferred",
+                    "evidence_file": "ordinary.sql",
+                    "line": 3,
+                },
+                {
+                    "source": "procedure:caller",
+                    "target": "procedure:load",
+                    "kind": "procedure_call",
+                    "status": "confirmed",
+                    "evidence_file": "caller.sql",
+                    "line": 2,
+                },
+            ],
+        }
+
+        display_objects, display_edges = _display_graph(graph)
+        display_graph = {"objects": display_objects, "edges": display_edges}
+        positions, _, _ = _compute_layout(display_graph)
+
+        self.assertEqual(
+            [edge["kind"] for edge in display_edges],
+            ["procedure_input", "procedure_output", "data_flow", "procedure_call"],
+        )
+        self.assertEqual(
+            [(edge["source"], edge["target"]) for edge in display_edges[:2]],
+            [
+                ("view:source", "procedure:load"),
+                ("procedure:load", "table:target"),
+            ],
+        )
+        self.assertEqual(display_edges[0]["evidence_file"], "load.sql")
+        self.assertEqual(display_edges[0]["line"], 8)
+        self.assertEqual(display_edges[2]["status"], "inferred")
+        self.assertNotIn("procedure:unused", {item["id"] for item in display_objects})
+        self.assertLess(
+            positions["view:source"]["rank"],
+            positions["procedure:load"]["rank"],
+        )
+        self.assertLess(
+            positions["procedure:load"]["rank"],
+            positions["table:target"]["rank"],
+        )
+        self.assertEqual(graph["edges"][0]["kind"], "data_flow")
+        self.assertEqual(graph["edges"][0]["target"], "table:target")
+
+    def test_html_payload_keeps_logical_graph_and_embeds_display_graph(self) -> None:
+        graph = {
+            "schema_version": 1,
+            "run_status": "completed",
+            "objects": [
+                {"id": "view:source", "type": "view", "name": "source", "status": "declared"},
+                {"id": "table:target", "type": "table", "name": "target", "status": "declared"},
+                {"id": "procedure:load", "type": "stored_procedure", "name": "load", "status": "declared"},
+                {"id": "procedure:unused", "type": "stored_procedure", "name": "unused", "status": "declared"},
+            ],
+            "edges": [
+                {
+                    "source": "view:source",
+                    "target": "table:target",
+                    "kind": "data_flow",
+                    "status": "confirmed",
+                    "evidence_file": "load.sql",
+                    "line": 8,
+                    "via_procedure": "procedure:load",
+                }
+            ],
+            "diagnostics": [],
+        }
+
+        html = render_html(graph)
+        match = re.search(
+            r'<script id="lineage-data" type="application/json">(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+
+        if match is None:
+            self.fail("The report is missing its embedded graph payload.")
+        payload = json.loads(match.group(1))
+
+        self.assertEqual(payload["graph"], graph)
+        self.assertEqual(
+            {item["id"] for item in payload["displayObjects"]},
+            {"view:source", "table:target", "procedure:load"},
+        )
+        self.assertEqual(
+            [edge["kind"] for edge in payload["displayEdges"]],
+            ["procedure_input", "procedure_output"],
+        )
+        self.assertIn("Procedure read/input", html)
+        self.assertIn("Procedure write/output", html)
+        self.assertIn("const displayEdges = payload.displayEdges;", html)
 
     def test_html_is_deterministic_offline_and_embeds_the_graph(self) -> None:
         graph = _graph()
