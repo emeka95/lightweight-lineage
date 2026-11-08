@@ -51,4 +51,29 @@ class ScanOptions:
                 )
 
 
-__all__ = ["ExplicitMapping", "ScanOptions", "TemplateVariable"]
+def parse_mapping(value: str) -> ExplicitMapping:
+    alias, separator, target = value.partition("=")
+    alias = alias.strip()
+    target = target.strip()
+    if not separator or not alias or not target:
+        raise ValueError("expected ALIAS=TARGET with both values non-empty")
+    return ExplicitMapping(alias, target)
+
+
+def parse_template_variable(value: str) -> TemplateVariable:
+    name, separator, content = value.partition("=")
+    name = name.strip()
+    if not separator or not name.isidentifier():
+        raise ValueError("expected a valid variable name and value in NAME=VALUE form")
+    if name.casefold() in {"ref", "source"}:
+        raise ValueError("ref and source are reserved Jinja2 helper names")
+    return TemplateVariable(name, content)
+
+
+__all__ = [
+    "ExplicitMapping",
+    "ScanOptions",
+    "TemplateVariable",
+    "parse_mapping",
+    "parse_template_variable",
+]

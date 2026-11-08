@@ -35,7 +35,15 @@ are omitted.
 ```powershell
 lineage scan path\to\repository --format html
 lineage scan path\to\repository
+lineage gui
+lineage gui --source path\to\repository
 ```
+
+The native desktop interface is an offline Tkinter application. It collects
+the same source, output, timeout, mapping, template-variable, and format
+options as the CLI. After a scan, it can open an HTML report and show SQL or
+template diagnostics separately. Use a Python installation that includes Tk
+support.
 
 The output format defaults to `json`; `--format html` selects the interactive
 report. When `--output` is omitted, the selected format is saved beside the

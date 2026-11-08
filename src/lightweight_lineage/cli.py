@@ -2,51 +2,36 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
 
-from lightweight_lineage.analysis import analyze_repository
 from lightweight_lineage.options import (
     ExplicitMapping,
     ScanOptions,
     TemplateVariable,
+    parse_mapping,
+    parse_template_variable,
 )
-from lightweight_lineage.report import render_html
+from lightweight_lineage.runner import run_scan
 from lightweight_lineage.scanner import (
     DEFAULT_TIMEOUT_SECONDS,
-    ScanDeadline,
     ScanTimeoutError,
 )
 
 
 def _parse_mapping(value: str) -> ExplicitMapping:
-    alias, separator, target = value.partition("=")
-    alias = alias.strip()
-    target = target.strip()
-    if not separator or not alias or not target:
-        raise click.BadParameter(
-            "expected ALIAS=TARGET with both values non-empty",
-            param_hint="--map",
-        )
-    return ExplicitMapping(alias, target)
+    try:
+        return parse_mapping(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error), param_hint="--map") from error
 
 
 def _parse_template_variable(value: str) -> TemplateVariable:
-    name, separator, content = value.partition("=")
-    name = name.strip()
-    if not separator or not name.isidentifier():
-        raise click.BadParameter(
-            "expected a valid variable name and value in NAME=VALUE form",
-            param_hint="--var",
-        )
-    if name.casefold() in {"ref", "source"}:
-        raise click.BadParameter(
-            "ref and source are reserved Jinja2 helper names",
-            param_hint="--var",
-        )
-    return TemplateVariable(name, content)
+    try:
+        return parse_template_variable(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error), param_hint="--var") from error
 
 
 @click.group()
@@ -118,27 +103,34 @@ def scan(
         template_variables=variables,
     )
     try:
-        deadline = ScanDeadline.start(timeout)
-        result = analyze_repository(options, deadline=deadline).to_dict()
-        if output_format.casefold() == "html":
-            rendered = render_html(result)
-        else:
-            rendered = json.dumps(result, indent=2, ensure_ascii=False) + "\n"
-        deadline.check()
-        if output is None:
-            destination = (
-                source.parent / "outputs" / f"lineage.{output_format.casefold()}"
-            )
-            destination.parent.mkdir(parents=True, exist_ok=True)
-        else:
-            destination = output
-        destination.write_text(rendered, encoding="utf-8", newline="\n")
+        result = run_scan(options, output_format=output_format, output=output)
         click.echo(
-            f"Lineage {output_format.upper()} written to {destination}."
+            f"Lineage {result.output_format.upper()} written to {result.destination}."
         )
     except ScanTimeoutError as error:
         raise click.ClickException(str(error)) from error
     except OSError as error:
+        raise click.ClickException(str(error)) from error
+
+
+@cli.command()
+@click.option(
+    "--source",
+    type=click.Path(path_type=Path, exists=True, file_okay=False, readable=True),
+    help="Preselect a repository directory in the GUI.",
+)
+def gui(source: Path | None) -> None:
+    """Open the offline desktop interface."""
+    try:
+        from lightweight_lineage.gui import GuiUnavailableError, launch_gui
+    except ImportError as error:
+        raise click.ClickException(
+            "The desktop interface requires Python with Tk support."
+        ) from error
+
+    try:
+        launch_gui(source)
+    except GuiUnavailableError as error:
         raise click.ClickException(str(error)) from error
 
 
