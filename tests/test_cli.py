@@ -11,6 +11,13 @@ from lightweight_lineage.cli import cli
 
 
 class ScanCommandTests(unittest.TestCase):
+    def test_gui_help_is_available_without_opening_a_window(self) -> None:
+        result = CliRunner().invoke(cli, ["gui", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Open the offline desktop interface", result.output)
+        self.assertIn("--source", result.output)
+
     def test_emits_lineage_json(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory) / "repo"
