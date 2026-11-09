@@ -130,7 +130,7 @@ class LineageGraph:
             "diagnostics": [item.to_dict() for item in diagnostics],
             "notes": [
                 "Foreign-key declarations are schema relationships, not data-flow edges, so they are not included in the lineage graph.",
-                "SQL parsing reports syntax errors; it does not validate SQL Server semantic rules.",
+                "SQL parsing reports syntax errors; it does not validate database-specific semantic rules.",
             ],
         }
 

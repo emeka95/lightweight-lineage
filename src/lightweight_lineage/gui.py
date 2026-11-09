@@ -56,6 +56,7 @@ def build_scan_options(
     timeout_text: str,
     mapping_text: str,
     template_text: str,
+    dialect_text: str = "tsql",
 ) -> ScanOptions:
     """Validate form values and create the same options used by the CLI."""
     source_value = source_text.strip()
@@ -75,12 +76,16 @@ def build_scan_options(
         raise ValueError("Timeout must be a whole number of seconds.") from error
     if timeout < 1:
         raise ValueError("Timeout must be at least one second.")
+    dialect = dialect_text.casefold()
+    if dialect not in {"tsql", "redshift"}:
+        raise ValueError("Choose either T-SQL or Redshift as the SQL dialect.")
 
     mappings = _parse_lines(mapping_text, parse_mapping, "Mapping")
     variables = _parse_lines(template_text, parse_template_variable, "Template variable")
     return ScanOptions(
         source=source,
         timeout_seconds=timeout,
+        dialect=dialect,
         mappings=mappings,
         template_variables=variables,
     )
@@ -98,6 +103,7 @@ class _LineageGui:
         self._output = StringVar()
         self._format = StringVar(value="html")
         self._timeout = StringVar(value="300")
+        self._dialect = StringVar(value="tsql")
         self._status = StringVar(value="Select a repository to begin.")
         self._last_result: ScanRunResult | None = None
         self._future: Future[ScanRunResult] | None = None
@@ -136,8 +142,10 @@ class _LineageGui:
         settings.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 14))
         settings.columnconfigure(0, weight=1)
         settings.columnconfigure(1, weight=1)
+        settings.columnconfigure(2, weight=1)
         ttk.Label(settings, text="Report format").grid(row=0, column=0, sticky="w")
         ttk.Label(settings, text="Timeout (seconds)").grid(row=0, column=1, sticky="w")
+        ttk.Label(settings, text="SQL dialect").grid(row=0, column=2, sticky="w")
         ttk.Combobox(
             settings,
             textvariable=self._format,
@@ -148,6 +156,13 @@ class _LineageGui:
         ttk.Entry(settings, textvariable=self._timeout, width=12).grid(
             row=1, column=1, sticky="w", pady=(4, 0)
         )
+        ttk.Combobox(
+            settings,
+            textvariable=self._dialect,
+            values=("tsql", "redshift"),
+            state="readonly",
+            width=12,
+        ).grid(row=1, column=2, sticky="w", pady=(4, 0))
 
         ttk.Label(panel, text="Object mappings (one ALIAS=TARGET per line)").grid(
             row=5, column=0, sticky="w", pady=(0, 4)
@@ -233,6 +248,7 @@ class _LineageGui:
                 self._timeout.get(),
                 self._mappings.get("1.0", "end-1c"),
                 self._variables.get("1.0", "end-1c"),
+                self._dialect.get(),
             )
         except ValueError as error:
             self._status.set(str(error))

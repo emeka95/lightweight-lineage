@@ -80,6 +80,43 @@ class RepositoryAnalysisTests(unittest.TestCase):
         )
         self.assertEqual(actual["run_status"], expected["run_status"])
 
+    def test_matches_expected_redshift_fixture_objects_and_edges(self) -> None:
+        expected = json.loads(
+            (REPOSITORY_ROOT / "fixtures/fix2/outputs/expected.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        actual = analyze_repository(
+            ScanOptions(
+                source=REPOSITORY_ROOT / "fixtures/fix2/repo",
+                dialect="redshift",
+            )
+        ).to_dict()
+
+        self.assertEqual(
+            {item["id"] for item in actual["objects"]},
+            {item["id"] for item in expected["objects"]},
+        )
+        actual_objects = {item["id"]: item for item in actual["objects"]}
+        for expected_object in expected["objects"]:
+            self.assertEqual(
+                actual_objects[expected_object["id"]]["type"],
+                expected_object["type"],
+            )
+        edge_key = lambda edge: (
+            edge["source"],
+            edge["target"],
+            edge["kind"],
+            edge["status"],
+            edge.get("via_procedure"),
+        )
+        self.assertEqual(
+            {edge_key(edge) for edge in actual["edges"]},
+            {edge_key(edge) for edge in expected["edges"]},
+        )
+        self.assertEqual(actual["diagnostics"], expected["diagnostics"])
+        self.assertEqual(actual["run_status"], expected["run_status"])
+
     def test_timeout_after_a_parse_aborts_before_parsing_next_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
