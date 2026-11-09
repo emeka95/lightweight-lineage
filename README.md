@@ -25,16 +25,16 @@ with Python 3.12.
 
 ## Current command
 
-The current command parses T-SQL files and emits object-level lineage as
-deterministic JSON or a self-contained interactive HTML report. The HTML
-report works offline, with clickable upstream/downstream highlighting and a
-separate diagnostics panel. Procedure-attributed reads and writes are routed
-through procedure nodes in the diagram; unconnected procedure declarations
-are omitted.
+The command parses T-SQL or Amazon Redshift SQL files and emits object-level
+lineage as deterministic JSON or a self-contained interactive HTML report. The
+HTML report works offline, with clickable upstream/downstream highlighting and
+a separate diagnostics panel. Procedure-attributed reads and writes are
+routed through procedure nodes in the diagram; unconnected procedure
+declarations are omitted.
 
 ```powershell
-lineage scan path\to\repository --format html
-lineage scan path\to\repository
+lineage scan path\to\repository --dialect tsql --format html
+lineage scan path\to\repository --dialect redshift
 lineage gui
 lineage gui --source path\to\repository
 ```
@@ -57,9 +57,14 @@ the built-in `ref()` and `source()` helpers support common SQL template
 references. Undefined variables and unsupported macros are reported as
 template errors. The CLI prints the path where it saved the report.
 
-The current T-SQL extractor handles permanent table/view/procedure objects,
+The default `--dialect tsql` selects T-SQL; `--dialect redshift` selects
+Amazon Redshift SQL. The GUI offers the same dialect choice. Redshift support
+includes table and CTAS declarations, views and materialized views, Spectrum
+external tables, static `COPY` and `UNLOAD` file flows, and static DML and
+procedure calls in dollar-quoted stored-procedure bodies. Dynamic SQL is not
+analyzed. The T-SQL extractor handles permanent table/view/procedure objects,
 CTEs and nested queries, common static DML, synonyms, statically named
 procedure calls within procedure bodies, linked-server four-part names,
 `BULK INSERT`, and `OPENROWSET(BULK ...)`.
 Non-BULK `OPENROWSET` connection strings are not interpreted. SQL diagnostics
-report parsing failures, not SQL Server semantic or execution errors.
+report parsing failures, not database semantic or execution errors.

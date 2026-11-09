@@ -18,6 +18,36 @@ class ScanCommandTests(unittest.TestCase):
         self.assertIn("Open the offline desktop interface", result.output)
         self.assertIn("--source", result.output)
 
+    def test_accepts_redshift_dialect(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / "repo"
+            root.mkdir()
+            (root / "source.sql").write_text(
+                "CREATE TABLE ingest.source (id BIGINT) DISTSTYLE ALL;",
+                encoding="utf-8",
+            )
+            output = Path(temporary_directory) / "lineage.json"
+
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "scan",
+                    str(root),
+                    "--dialect",
+                    "redshift",
+                    "--output",
+                    str(output),
+                ],
+            )
+            self.assertEqual(result.exit_code, 0, result.output)
+            graph = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            {item["id"] for item in graph["objects"]},
+            {"table:ingest.source"},
+        )
+        self.assertEqual(graph["diagnostics"], [])
+
     def test_emits_lineage_json(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory) / "repo"

@@ -1,0 +1,1 @@
+This fixture tests for Redshift SQL.

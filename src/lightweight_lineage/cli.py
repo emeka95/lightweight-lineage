@@ -65,6 +65,13 @@ def cli() -> None:
     help="Maximum time in seconds for the whole scan.",
 )
 @click.option(
+    "--dialect",
+    type=click.Choice(("tsql", "redshift"), case_sensitive=False),
+    default="tsql",
+    show_default=True,
+    help="SQL dialect used to parse source files.",
+)
+@click.option(
     "--map",
     "mapping_values",
     multiple=True,
@@ -83,6 +90,7 @@ def scan(
     output: Path | None,
     output_format: str,
     timeout: int,
+    dialect: str,
     mapping_values: tuple[str, ...],
     template_values: tuple[str, ...],
 ) -> None:
@@ -99,6 +107,7 @@ def scan(
     options = ScanOptions(
         source=source,
         timeout_seconds=timeout,
+        dialect=dialect.casefold(),
         mappings=tuple(_parse_mapping(value) for value in mapping_values),
         template_variables=variables,
     )

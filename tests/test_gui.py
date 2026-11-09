@@ -21,6 +21,7 @@ class GuiOptionsTests(unittest.TestCase):
 
         self.assertEqual(options.source, root)
         self.assertEqual(options.timeout_seconds, 45)
+        self.assertEqual(options.dialect, "tsql")
         self.assertEqual(
             [(mapping.alias, mapping.target) for mapping in options.mappings],
             [("legacy.orders", "dbo.orders")],
@@ -29,6 +30,18 @@ class GuiOptionsTests(unittest.TestCase):
             [(variable.name, variable.value) for variable in options.template_variables],
             [("schema", "sales")],
         )
+
+    def test_builds_options_for_redshift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            options = build_scan_options(
+                temporary_directory,
+                "300",
+                "",
+                "",
+                "Redshift",
+            )
+
+        self.assertEqual(options.dialect, "redshift")
 
     def test_reports_malformed_mapping_with_its_form_line(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
