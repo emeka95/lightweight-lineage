@@ -19,6 +19,7 @@ class RepositoryAnalysisTests(unittest.TestCase):
         self,
         sql_files: dict[str, str],
         *,
+        dialect: str = "tsql",
         mappings: tuple[ExplicitMapping, ...] = (),
         template_variables: tuple[TemplateVariable, ...] = (),
     ) -> dict[str, object]:
@@ -31,6 +32,7 @@ class RepositoryAnalysisTests(unittest.TestCase):
             return analyze_repository(
                 ScanOptions(
                     source=root,
+                    dialect=dialect,
                     mappings=mappings,
                     template_variables=template_variables,
                 )
@@ -78,6 +80,22 @@ class RepositoryAnalysisTests(unittest.TestCase):
                 for item in expected["diagnostics"]
             },
         )
+        for expected_edge in expected["edges"]:
+            matching_edges = [
+                edge
+                for edge in actual["edges"]
+                if edge["source"] == expected_edge["source"]
+                and edge["target"] == expected_edge["target"]
+                and edge["kind"] == expected_edge["kind"]
+                and edge["status"] == expected_edge["status"]
+                and edge.get("via_procedure") == expected_edge.get("via_procedure")
+            ]
+            self.assertTrue(matching_edges)
+            for key, value in expected_edge.items():
+                self.assertTrue(
+                    any(edge.get(key) == value for edge in matching_edges),
+                    f"No matching T-SQL edge has {key}={value!r}: {matching_edges}",
+                )
         self.assertEqual(actual["run_status"], expected["run_status"])
 
     def test_matches_expected_redshift_fixture_objects_and_edges(self) -> None:
@@ -116,6 +134,174 @@ class RepositoryAnalysisTests(unittest.TestCase):
         )
         self.assertEqual(actual["diagnostics"], expected["diagnostics"])
         self.assertEqual(actual["run_status"], expected["run_status"])
+
+    def test_redshift_edge_evidence_has_exact_file_line_and_column(self) -> None:
+        graph = self.analyze_sql(
+            {
+                "source.sql": "CREATE TABLE ingest.src (id BIGINT);\n",
+                "ctas.sql": (
+                    "CREATE TABLE staging.copy AS\n"
+                    "SELECT id\n"
+                    "FROM ingest.src;\n"
+                ),
+                "copy.sql": (
+                    "COPY ingest.src\n"
+                    "FROM 's3://bucket/data/'\n"
+                    "IAM_ROLE default;\n"
+                ),
+                "unload.sql": (
+                    "UNLOAD ('\n"
+                    "    SELECT id\n"
+                    "    FROM staging.copy\n"
+                    "')\n"
+                    "TO 's3://bucket/out/'\n"
+                    "IAM_ROLE default;\n"
+                ),
+            },
+            dialect="redshift",
+        )
+
+        evidence = {
+            (edge["source"], edge["target"]): (
+                edge["evidence_file"],
+                edge["line"],
+                edge["column"],
+            )
+            for edge in graph["edges"]
+            if edge["kind"] == "data_flow"
+        }
+
+        self.assertEqual(
+            evidence,
+            {
+                (
+                    "table:ingest.src",
+                    "table:staging.copy",
+                ): ("ctas.sql", 3, 6),
+                (
+                    "data_file:s3://bucket/data/",
+                    "table:ingest.src",
+                ): ("copy.sql", 2, 6),
+                (
+                    "table:staging.copy",
+                    "data_file:s3://bucket/out/",
+                ): ("unload.sql", 3, 10),
+            },
+        )
+
+    def test_redshift_tagged_dollar_quoted_procedure_extracts_static_dml(self) -> None:
+        graph = self.analyze_sql(
+            {
+                "tables.sql": (
+                    "CREATE TABLE analytics.src (id BIGINT);\n"
+                    "CREATE TABLE analytics.dst (id BIGINT);\n"
+                ),
+                "procedure.sql": (
+                    "CREATE PROCEDURE ops.copy_data()\n"
+                    "LANGUAGE plpgsql\n"
+                    "AS $copy$\n"
+                    "BEGIN\n"
+                    "    INSERT INTO analytics.dst SELECT id FROM analytics.src;\n"
+                    "END;\n"
+                    "$copy$;\n"
+                ),
+            },
+            dialect="redshift",
+        )
+
+        edge = next(
+            edge
+            for edge in graph["edges"]
+            if edge["source"] == "table:analytics.src"
+            and edge["target"] == "table:analytics.dst"
+        )
+
+        self.assertEqual(edge["via_procedure"], "procedure:ops.copy_data")
+        self.assertEqual(edge["evidence_file"], "procedure.sql")
+        self.assertEqual(edge["line"], 5)
+        self.assertEqual(edge["column"], 46)
+        self.assertFalse(graph["diagnostics"])
+
+    def test_redshift_unsupported_procedure_delimiter_is_reported(self) -> None:
+        graph = self.analyze_sql(
+            {
+                "procedure.sql": (
+                    "CREATE PROCEDURE ops.unsupported()\n"
+                    "LANGUAGE plpgsql\n"
+                    "AS 'BEGIN INSERT INTO analytics.dst SELECT id FROM analytics.src; END;';\n"
+                )
+            },
+            dialect="redshift",
+        )
+
+        self.assertEqual(graph["run_status"], "completed_with_warnings")
+        self.assertEqual(
+            [
+                (
+                    diagnostic["severity"],
+                    diagnostic["code"],
+                    diagnostic["file"],
+                )
+                for diagnostic in graph["diagnostics"]
+            ],
+            [("warning", "unsupported_procedure_body", "procedure.sql")],
+        )
+        self.assertFalse(graph["edges"])
+
+    def test_redshift_dynamic_sql_is_flagged_and_not_interpreted(self) -> None:
+        graph = self.analyze_sql(
+            {
+                "procedure.sql": (
+                    "CREATE PROCEDURE ops.dynamic()\n"
+                    "LANGUAGE plpgsql\n"
+                    "AS $body$\n"
+                    "BEGIN\n"
+                    "    EXECUTE 'INSERT INTO analytics.hidden SELECT * FROM analytics.source';\n"
+                    "END;\n"
+                    "$body$;\n"
+                )
+            },
+            dialect="redshift",
+        )
+
+        self.assertNotIn(
+            "table:analytics.hidden",
+            {item["id"] for item in graph["objects"]},
+        )
+        self.assertNotIn(
+            "table:analytics.source",
+            {item["id"] for item in graph["objects"]},
+        )
+        self.assertEqual(
+            [
+                (diagnostic["severity"], diagnostic["code"])
+                for diagnostic in graph["diagnostics"]
+            ],
+            [("warning", "unsupported_dynamic_sql")],
+        )
+
+    def test_redshift_malformed_sql_is_reported_without_hiding_valid_files(self) -> None:
+        graph = self.analyze_sql(
+            {
+                "valid.sql": "CREATE TABLE analytics.valid (id BIGINT);\n",
+                "invalid.sql": (
+                    "CREATE VIEW analytics.invalid AS\n"
+                    "SELECT id FROM ;\n"
+                ),
+            },
+            dialect="redshift",
+        )
+
+        object_ids = {item["id"] for item in graph["objects"]}
+        self.assertIn("table:analytics.valid", object_ids)
+        self.assertNotIn("view:analytics.invalid", object_ids)
+        self.assertEqual(
+            [
+                (item["severity"], item["code"], item["file"])
+                for item in graph["diagnostics"]
+            ],
+            [("error", "sql_parse_error", "invalid.sql")],
+        )
 
     def test_timeout_after_a_parse_aborts_before_parsing_next_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
