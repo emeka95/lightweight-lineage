@@ -94,7 +94,7 @@ def scan(
     mapping_values: tuple[str, ...],
     template_values: tuple[str, ...],
 ) -> None:
-    """Analyze T-SQL files under SOURCE and emit lineage JSON or HTML."""
+    """Analyze SQL files under SOURCE with the selected dialect."""
     variables = tuple(_parse_template_variable(value) for value in template_values)
     variable_names: dict[str, str] = {}
     for variable in variables:

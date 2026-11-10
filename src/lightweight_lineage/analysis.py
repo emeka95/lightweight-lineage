@@ -1,4 +1,4 @@
-"""T-SQL parsing, object resolution, and object-level lineage extraction."""
+"""SQL dialect parsing, object resolution, and object-level lineage extraction."""
 
 from __future__ import annotations
 
