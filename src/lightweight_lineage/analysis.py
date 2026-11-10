@@ -21,27 +21,10 @@ from lightweight_lineage.graph import (
 from lightweight_lineage.options import ExplicitMapping, ScanOptions
 from lightweight_lineage.scanner import ScanDeadline, scan_repository
 
-_SQL_OBJECT_DECLARATIONS = (
-    ("create_table_statement", "table", "table_reference"),
-    ("create_view_statement", "view", "object_reference"),
-    ("create_procedure_statement", "stored_procedure", "object_reference"),
-)
-_REDSHIFT_OBJECT_DECLARATIONS = (
-    ("create_table_statement", "table", "table_reference"),
-    ("create_table_as_statement", "table", "object_reference"),
-    ("create_view_statement", "view", "table_reference"),
-    ("create_materialized_view_statement", "materialized_view", "table_reference"),
-    ("create_external_table_statement", "external_table", "table_reference"),
-    ("create_procedure_statement", "stored_procedure", "function_name"),
-)
 _DATA_MODIFICATION_TYPES = (
     "insert_statement",
     "update_statement",
     "merge_statement",
-)
-_REDSHIFT_DYNAMIC_EXECUTE = re.compile(
-    r"(?im)^[ \t]*EXECUTE(?:[ \t]+IMMEDIATE)?[ \t]+"
-    r"'(?:''|[^'])*'[ \t]*(?:USING\b[^;\r\n]*)?;?"
 )
 
 
@@ -783,20 +766,9 @@ def _add_data_flow(
 def _add_view_flows(
     parsed_file: _ParsedFile,
     builder: _GraphBuilder,
-    dialect: str = "tsql",
 ) -> None:
-    statement_types = (
-        ("create_view_statement", "create_materialized_view_statement")
-        if dialect == "redshift"
-        else ("create_view_statement",)
-    )
-    name_types = (
-        ("table_reference", "object_reference")
-        if dialect == "redshift"
-        else ("object_reference",)
-    )
-    for view in _descendants(parsed_file.tree, *statement_types):
-        name_segment = _statement_identifier(view, *name_types)
+    for view in _descendants(parsed_file.tree, "create_view_statement"):
+        name_segment = _statement_identifier(view, "object_reference")
         if name_segment is None:
             continue
         line, column = _location(name_segment)
@@ -925,48 +897,21 @@ def _add_procedure_calls(
     parsed_file: _ParsedFile,
     builder: _GraphBuilder,
     procedure_spans: list[_ProcedureSpan],
-    *,
-    dialect: str = "tsql",
-    caller_id: str | None = None,
 ) -> None:
-    if dialect == "redshift":
-        statements = _descendants(parsed_file.tree, "call_statement")
-    else:
-        statements = _descendants(parsed_file.tree, "execute_script_statement")
-    for statement in statements:
-        resolved_caller_id = caller_id or _containing_procedure(
-            statement,
-            procedure_spans,
-        )
-        if resolved_caller_id is None:
+    for statement in _descendants(parsed_file.tree, "execute_script_statement"):
+        caller_id = _containing_procedure(statement, procedure_spans)
+        if caller_id is None:
             continue
-        if dialect == "redshift":
-            function_segment = _first_direct(statement, "function")
-            called_name = (
-                re.match(r"\s*([^\s(]+)", function_segment.raw).group(1)
-                if function_segment is not None
-                else None
-            )
-            called_segment = function_segment
-        else:
-            called_segment = _first_direct(statement, "object_reference")
-            called_name = called_segment.raw if called_segment is not None else None
-        if called_segment is None or called_name is None:
+        called_segment = _first_direct(statement, "object_reference")
+        if called_segment is None:
             continue
         reference = _reference(
             called_segment,
             parsed_file.path,
             "stored_procedure",
         )
-        reference = _Reference(
-            called_name,
-            reference.file,
-            reference.line,
-            reference.column,
-            reference.type_hint,
-        )
         callees = builder.resolve(reference)
-        caller = builder.objects.get(resolved_caller_id)
+        caller = builder.objects.get(caller_id)
         if caller is None:
             continue
         for callee in callees:
@@ -993,247 +938,24 @@ def _add_procedure_calls(
             )
 
 
-def _redshift_procedure_body(
-    procedure: BaseSegment,
-    file: str,
-    builder: _GraphBuilder,
-    linter: Linter,
-) -> tuple[str, BaseSegment] | None:
-    name_segment = _first_direct(procedure, "function_name")
-    definition = _first_direct(procedure, "function_definition")
-    if name_segment is None or definition is None:
-        return None
-
-    name = name_segment.raw
-    identifier = next(
-        (
-            object_id
-            for object_id in builder.declarations.get(_normalized_name(name), [])
-            if builder.objects[object_id].type == "stored_procedure"
-        ),
-        None,
-    )
-    if identifier is None:
-        return None
-
-    match = re.search(
-        r"\bAS\s+(\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$)(.*?)\1",
-        definition.raw,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if match is None:
-        line, column = _location(definition)
-        builder.add_diagnostic(
-            "warning",
-            "unsupported_procedure_body",
-            file,
-            f"Stored procedure {name!r} does not use a supported dollar-quoted body.",
-            line,
-            column,
-        )
-        return None
-
-    function_line, _ = _location(definition)
-    body_line = function_line + definition.raw[: match.start(2)].count("\n")
-    body = match.group(2)
-    masked_body = list(body)
-    for dynamic_statement in _REDSHIFT_DYNAMIC_EXECUTE.finditer(body):
-        prefix = body[: dynamic_statement.start()]
-        line = body_line + prefix.count("\n")
-        column = len(prefix.rsplit("\n", 1)[-1]) + 1
-        builder.add_diagnostic(
-            "warning",
-            "unsupported_dynamic_sql",
-            file,
-            "Dynamic SQL in a Redshift stored procedure is not analyzed.",
-            line,
-            column,
-        )
-        for index in range(dynamic_statement.start(), dynamic_statement.end()):
-            if masked_body[index] not in "\r\n":
-                masked_body[index] = " "
-    body = "".join(masked_body)
-    begin = re.search(r"\bBEGIN\b", body, re.IGNORECASE)
-    end = re.search(r"\bEND\s*;?\s*$", body, re.IGNORECASE)
-    if begin is None or end is None or begin.end() > end.start():
-        line, column = _location(definition)
-        builder.add_diagnostic(
-            "warning",
-            "unsupported_procedure_body",
-            file,
-            f"Stored procedure {name!r} does not contain a supported BEGIN/END body.",
-            line,
-            column,
-        )
-        return None
-
-    body_source = (
-        "\n" * (body_line - 1)
-        + body[: begin.start()]
-        + " " * (begin.end() - begin.start())
-        + body[begin.end() : end.start()]
-        + " " * (end.end() - end.start())
-        + body[end.end() :]
-    )
-    parsed = linter.parse_string(body_source, fname=file)
-    if parsed.violations:
-        for violation in parsed.violations:
-            builder.add_diagnostic(
-                "error",
-                "sql_parse_error",
-                file,
-                str(violation),
-                getattr(violation, "line_no", None),
-                getattr(violation, "line_pos", None),
-            )
-        return None
-    return identifier, parsed.tree
-
-
-def _add_redshift_ctas_flows(
-    parsed_file: _ParsedFile,
-    builder: _GraphBuilder,
-) -> None:
-    file = parsed_file.path
-    for statement in _descendants(parsed_file.tree, "create_table_as_statement"):
-        target_segment = _first_direct(statement, "object_reference")
-        if target_segment is None:
-            continue
-        target_reference = _reference(target_segment, file, "table")
-        targets = builder.declared_resolutions(
-            target_reference.name,
-            file,
-            target_reference.line,
-            target_reference.column,
-        )
-        sources = _table_references(statement, file)
-        _add_data_flow(builder, sources, targets, file)
-
-
-def _add_redshift_external_table_flows(
-    parsed_file: _ParsedFile,
-    builder: _GraphBuilder,
-) -> None:
-    for statement in _descendants(parsed_file.tree, "create_external_table_statement"):
-        target_segment = _first_direct(statement, "table_reference")
-        location = _first_direct(statement, "quoted_literal")
-        if target_segment is None or location is None:
-            continue
-        target_reference = _reference(target_segment, parsed_file.path, "external_table")
-        source_reference = _Reference(
-            _literal_value(location.raw),
-            parsed_file.path,
-            *_location(location),
-            "data_file",
-        )
-        _add_data_flow(
-            builder,
-            [source_reference],
-            _resolve_endpoint(builder, target_reference, write_target=True),
-            parsed_file.path,
-        )
-
-
-def _add_redshift_copy_flows(
-    parsed_file: _ParsedFile,
-    builder: _GraphBuilder,
-) -> None:
-    for statement in _descendants(parsed_file.tree, "copy_statement"):
-        target_segment = _first_direct(statement, "table_reference")
-        source_segment = _first_direct(statement, "quoted_literal")
-        if target_segment is None or source_segment is None:
-            continue
-        target = _reference(target_segment, parsed_file.path, "table")
-        source = _Reference(
-            _literal_value(source_segment.raw),
-            parsed_file.path,
-            *_location(source_segment),
-            "data_file",
-        )
-        _add_data_flow(
-            builder,
-            [source],
-            _resolve_endpoint(builder, target, write_target=True),
-            parsed_file.path,
-        )
-
-
-def _add_redshift_unload_flows(
-    parsed_file: _ParsedFile,
-    builder: _GraphBuilder,
-    linter: Linter,
-) -> None:
-    for statement in _descendants(parsed_file.tree, "unload_statement"):
-        query_container = _first_direct(statement, "bracketed")
-        output_segment = _first_direct(statement, "quoted_literal")
-        query_literal = (
-            next(iter(_descendants(query_container, "quoted_literal")), None)
-            if query_container is not None
-            else None
-        )
-        if query_literal is None or output_segment is None:
-            continue
-
-        query = _literal_value(query_literal.raw)
-        parsed_query = linter.parse_string(query, fname=parsed_file.path)
-        if parsed_query.violations:
-            for violation in parsed_query.violations:
-                builder.add_diagnostic(
-                    "error",
-                    "sql_parse_error",
-                    parsed_file.path,
-                    str(violation),
-                    getattr(violation, "line_no", None),
-                    getattr(violation, "line_pos", None),
-                )
-            continue
-
-        output = _Reference(
-            _literal_value(output_segment.raw),
-            parsed_file.path,
-            *_location(output_segment),
-            "data_file",
-        )
-        target = _resolve_endpoint(builder, output, write_target=True)
-        query_line_offset = _location(query_literal)[0] - 1
-        sources = [
-            _Reference(
-                reference.name,
-                reference.file,
-                reference.line + query_line_offset,
-                reference.column,
-                reference.type_hint,
-            )
-            for reference in _table_references(parsed_query.tree, parsed_file.path)
-        ]
-        _add_data_flow(
-            builder,
-            sources,
-            target,
-            parsed_file.path,
-        )
-
-
 def analyze_repository(
     options: ScanOptions,
     *,
     deadline: ScanDeadline | None = None,
 ) -> LineageGraph:
     """Parse a repository and return deterministic object-level lineage."""
+    from lightweight_lineage.dialects import get_dialect_adapter
+
     deadline = deadline or ScanDeadline.start(options.timeout_seconds)
     files = scan_repository(options.source, deadline=deadline)
     builder = _GraphBuilder(options.mappings, deadline)
+    adapter = get_dialect_adapter(options.dialect)
     environment = Environment(undefined=StrictUndefined, autoescape=False)
     environment.globals.update({"ref": _jinja_ref, "source": _jinja_source})
     template_values = {
         variable.name: variable.value for variable in options.template_variables
     }
     linter = Linter(dialect=options.dialect)
-    object_declarations = (
-        _REDSHIFT_OBJECT_DECLARATIONS
-        if options.dialect == "redshift"
-        else _SQL_OBJECT_DECLARATIONS
-    )
     parsed_files: list[_ParsedFile] = []
 
     for path in files:
@@ -1279,7 +1001,7 @@ def analyze_repository(
         parsed_files.append(_ParsedFile(path, parsed.tree))
 
     for parsed_file in parsed_files:
-        for statement_type, object_type, name_type in object_declarations:
+        for statement_type, object_type, name_type in adapter.object_declarations:
             deadline.check()
             for statement in _descendants(parsed_file.tree, statement_type):
                 name_segment = _statement_identifier(statement, name_type)
@@ -1289,67 +1011,10 @@ def analyze_repository(
                         name_segment.raw,
                         parsed_file.path,
                     )
-
-        for synonym in _descendants(parsed_file.tree, "create_synonym_statement"):
-            deadline.check()
-            synonym_name = _first_direct(synonym, "synonym_reference")
-            target = _first_direct(synonym, "object_reference")
-            if synonym_name is not None and target is not None:
-                synonym_key = _normalized_name(synonym_name.raw)
-                targets = builder.synonyms.setdefault(synonym_key, [])
-                if _normalized_name(target.raw) not in {
-                    _normalized_name(value) for value in targets
-                }:
-                    targets.append(target.raw)
+        adapter.collect_metadata(parsed_file, builder)
 
     for parsed_file in parsed_files:
-        if options.dialect == "redshift":
-            procedure_spans = []
-            _add_view_flows(parsed_file, builder, "redshift")
-            _add_redshift_ctas_flows(parsed_file, builder)
-            _add_redshift_external_table_flows(parsed_file, builder)
-            _add_redshift_copy_flows(parsed_file, builder)
-            _add_redshift_unload_flows(parsed_file, builder, linter)
-            for procedure in _descendants(
-                parsed_file.tree,
-                "create_procedure_statement",
-            ):
-                body = _redshift_procedure_body(
-                    procedure,
-                    parsed_file.path,
-                    builder,
-                    linter,
-                )
-                if body is None:
-                    continue
-                procedure_id, body_tree = body
-                procedure_file = _ParsedFile(parsed_file.path, body_tree)
-                _add_dml_flows(
-                    procedure_file,
-                    builder,
-                    [],
-                    procedure_id,
-                )
-                _add_procedure_calls(
-                    procedure_file,
-                    builder,
-                    [],
-                    dialect="redshift",
-                    caller_id=procedure_id,
-                )
-            _add_dml_flows(parsed_file, builder, procedure_spans)
-            _add_procedure_calls(
-                parsed_file,
-                builder,
-                procedure_spans,
-                dialect="redshift",
-            )
-        else:
-            procedure_spans = _procedure_spans(parsed_file, builder)
-            _add_view_flows(parsed_file, builder)
-            _add_dml_flows(parsed_file, builder, procedure_spans)
-            _add_bulk_insert_flows(parsed_file, builder, procedure_spans)
-            _add_procedure_calls(parsed_file, builder, procedure_spans)
+        adapter.extract_flows(parsed_file, builder, linter)
         deadline.check()
 
     return LineageGraph(
