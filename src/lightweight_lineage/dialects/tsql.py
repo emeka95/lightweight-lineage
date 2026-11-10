@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from sqlfluff.core import Linter
 
-from lightweight_lineage.analysis import (
-    _GraphBuilder,
-    _ParsedFile,
+from lightweight_lineage.analysis_core import (
+    GraphBuilder,
+    ParsedFile,
     _add_bulk_insert_flows,
     _add_dml_flows,
     _add_procedure_calls,
@@ -28,8 +28,8 @@ class TSqlAdapter:
 
     def collect_metadata(
         self,
-        parsed_file: _ParsedFile,
-        builder: _GraphBuilder,
+        parsed_file: ParsedFile,
+        builder: GraphBuilder,
     ) -> None:
         for synonym in _descendants(
             parsed_file.tree,
@@ -48,8 +48,8 @@ class TSqlAdapter:
 
     def extract_flows(
         self,
-        parsed_file: _ParsedFile,
-        builder: _GraphBuilder,
+        parsed_file: ParsedFile,
+        builder: GraphBuilder,
         _linter: Linter,
     ) -> None:
         procedure_spans = _procedure_spans(parsed_file, builder)

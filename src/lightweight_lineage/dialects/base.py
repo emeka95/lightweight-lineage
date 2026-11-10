@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from sqlfluff.core import Linter
 
 if TYPE_CHECKING:
-    from lightweight_lineage.analysis import _GraphBuilder, _ParsedFile
+    from lightweight_lineage.analysis_core import GraphBuilder, ParsedFile
 
 
 ObjectDeclaration = tuple[str, str, str]
@@ -20,14 +20,14 @@ class DialectAdapter(Protocol):
 
     def collect_metadata(
         self,
-        parsed_file: _ParsedFile,
-        builder: _GraphBuilder,
+        parsed_file: ParsedFile,
+        builder: GraphBuilder,
     ) -> None: ...
 
     def extract_flows(
         self,
-        parsed_file: _ParsedFile,
-        builder: _GraphBuilder,
+        parsed_file: ParsedFile,
+        builder: GraphBuilder,
         linter: Linter,
     ) -> None: ...
 

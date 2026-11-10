@@ -7,10 +7,10 @@ import re
 from sqlfluff.core import Linter
 from sqlfluff.core.parser import BaseSegment
 
-from lightweight_lineage.analysis import (
-    _GraphBuilder,
-    _ParsedFile,
-    _Reference,
+from lightweight_lineage.analysis_core import (
+    GraphBuilder as _GraphBuilder,
+    ParsedFile as _ParsedFile,
+    Reference as _Reference,
     _add_data_flow,
     _add_dml_flows,
     _descendants,
