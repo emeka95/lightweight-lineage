@@ -39,6 +39,10 @@ _DATA_MODIFICATION_TYPES = (
     "update_statement",
     "merge_statement",
 )
+_REDSHIFT_DYNAMIC_EXECUTE = re.compile(
+    r"(?im)^[ \t]*EXECUTE(?:[ \t]+IMMEDIATE)?[ \t]+"
+    r"'(?:''|[^'])*'[ \t]*(?:USING\b[^;\r\n]*)?;?"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1029,7 +1033,26 @@ def _redshift_procedure_body(
         )
         return None
 
+    function_line, _ = _location(definition)
+    body_line = function_line + definition.raw[: match.start(2)].count("\n")
     body = match.group(2)
+    masked_body = list(body)
+    for dynamic_statement in _REDSHIFT_DYNAMIC_EXECUTE.finditer(body):
+        prefix = body[: dynamic_statement.start()]
+        line = body_line + prefix.count("\n")
+        column = len(prefix.rsplit("\n", 1)[-1]) + 1
+        builder.add_diagnostic(
+            "warning",
+            "unsupported_dynamic_sql",
+            file,
+            "Dynamic SQL in a Redshift stored procedure is not analyzed.",
+            line,
+            column,
+        )
+        for index in range(dynamic_statement.start(), dynamic_statement.end()):
+            if masked_body[index] not in "\r\n":
+                masked_body[index] = " "
+    body = "".join(masked_body)
     begin = re.search(r"\bBEGIN\b", body, re.IGNORECASE)
     end = re.search(r"\bEND\s*;?\s*$", body, re.IGNORECASE)
     if begin is None or end is None or begin.end() > end.start():
@@ -1044,8 +1067,6 @@ def _redshift_procedure_body(
         )
         return None
 
-    function_line, _ = _location(definition)
-    body_line = function_line + definition.raw[: match.start(2)].count("\n")
     body_source = (
         "\n" * (body_line - 1)
         + body[: begin.start()]
