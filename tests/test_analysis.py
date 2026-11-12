@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from sqlfluff.core import Linter
+
 from lightweight_lineage.analysis import analyze_repository
 from lightweight_lineage.options import ExplicitMapping, ScanOptions, TemplateVariable
 from lightweight_lineage.scanner import ScanTimeoutError
@@ -323,13 +325,14 @@ class RepositoryAnalysisTests(unittest.TestCase):
                 self.assertIn("CREATE TABLE", source)
                 self.assertEqual(fname, "a.sql")
                 clock[0] = 2.0
-                return SimpleNamespace(violations=[])
+                tree = Linter(dialect="tsql").parse_string(source, fname=fname).tree
+                return SimpleNamespace(violations=[], tree=tree)
 
             with patch(
                 "lightweight_lineage.scanner.time.monotonic",
                 side_effect=monotonic,
             ):
-                with patch("lightweight_lineage.analysis.Linter") as linter_type:
+                with patch("lightweight_lineage.dialects.tsql.Linter") as linter_type:
                     linter_type.return_value.parse_string.side_effect = parse_string
                     with self.assertRaises(ScanTimeoutError):
                         analyze_repository(

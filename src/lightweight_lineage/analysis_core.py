@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from typing import Iterable
 from urllib.parse import urlsplit
 
+from sqlfluff.core import Linter
 from sqlfluff.core.parser import BaseSegment
 
+from lightweight_lineage.dialects.base import ParseDiagnostic, ParseResult, ParsedFile
 from lightweight_lineage.graph import (
     Diagnostic,
     LineageEdge,
@@ -26,7 +28,7 @@ _DATA_MODIFICATION_TYPES = (
 
 
 @dataclass(frozen=True, slots=True)
-class _ParsedFile:
+class SqlParsedFile:
     path: str
     tree: BaseSegment
 
@@ -601,8 +603,33 @@ class _GraphBuilder:
 
 
 GraphBuilder = _GraphBuilder
-ParsedFile = _ParsedFile
 Reference = _Reference
+
+
+def parse_sql_source(source: str, path: str, linter: Linter) -> ParseResult:
+    parsed = linter.parse_string(source, fname=path)
+    diagnostics = tuple(
+        ParseDiagnostic(
+            "error",
+            "sql_parse_error",
+            str(violation),
+            getattr(violation, "line_no", None),
+            getattr(violation, "line_pos", None),
+        )
+        for violation in parsed.violations
+    )
+    if diagnostics:
+        return ParseResult(None, diagnostics)
+    return ParseResult(SqlParsedFile(path, parsed.tree))
+
+
+def require_sql_parsed_file(parsed_file: ParsedFile) -> SqlParsedFile:
+    if not isinstance(parsed_file, SqlParsedFile):
+        raise TypeError(
+            "SQL flow extraction requires a parsed file created by a SQL adapter."
+        )
+    return parsed_file
+
 
 def _unique_resolutions(values: list[_Resolution]) -> list[_Resolution]:
     unique: dict[str, _Resolution] = {}
@@ -677,8 +704,25 @@ def _statement_identifier(statement: BaseSegment, *types: str) -> BaseSegment | 
     return _first_direct(statement, *types)
 
 
+def collect_object_declarations(
+    parsed_file: SqlParsedFile,
+    builder: _GraphBuilder,
+    declarations: tuple[tuple[str, str, str], ...],
+) -> None:
+    for statement_type, object_type, name_type in declarations:
+        builder.deadline.check()
+        for statement in _descendants(parsed_file.tree, statement_type):
+            name_segment = _statement_identifier(statement, name_type)
+            if name_segment is not None:
+                builder.add_declaration(
+                    object_type,
+                    name_segment.raw,
+                    parsed_file.path,
+                )
+
+
 def _procedure_spans(
-    parsed_file: _ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: _GraphBuilder,
 ) -> list[_ProcedureSpan]:
     spans: list[_ProcedureSpan] = []
@@ -775,7 +819,7 @@ def _add_data_flow(
 
 
 def _add_view_flows(
-    parsed_file: _ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: _GraphBuilder,
 ) -> None:
     for view in _descendants(parsed_file.tree, "create_view_statement"):
@@ -820,7 +864,7 @@ def _dml_target(
 
 
 def _add_dml_flows(
-    parsed_file: _ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: _GraphBuilder,
     procedure_spans: list[_ProcedureSpan],
     procedure_id: str | None = None,
@@ -879,7 +923,7 @@ def _add_dml_flows(
 
 
 def _add_bulk_insert_flows(
-    parsed_file: _ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: _GraphBuilder,
     procedure_spans: list[_ProcedureSpan],
 ) -> None:
@@ -905,7 +949,7 @@ def _add_bulk_insert_flows(
 
 
 def _add_procedure_calls(
-    parsed_file: _ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: _GraphBuilder,
     procedure_spans: list[_ProcedureSpan],
 ) -> None:
@@ -968,21 +1012,24 @@ table_references = _table_references
 
 __all__ = [
     "GraphBuilder",
-    "ParsedFile",
     "Reference",
+    "SqlParsedFile",
     "add_bulk_insert_flows",
     "add_data_flow",
     "add_dml_flows",
     "add_procedure_calls",
     "add_view_flows",
+    "collect_object_declarations",
     "descendants",
     "first_direct",
     "location",
     "literal_value",
     "normalized_name",
+    "parse_sql_source",
     "procedure_spans",
     "reference",
     "resolve_endpoint",
+    "require_sql_parsed_file",
     "statement_identifier",
     "table_references",
 ]

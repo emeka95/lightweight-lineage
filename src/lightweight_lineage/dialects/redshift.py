@@ -9,19 +9,27 @@ from sqlfluff.core.parser import BaseSegment
 
 from lightweight_lineage.analysis_core import (
     GraphBuilder,
-    ParsedFile,
     Reference,
+    SqlParsedFile,
     add_data_flow,
     add_dml_flows,
+    collect_object_declarations,
     descendants,
     location,
     literal_value,
+    parse_sql_source,
     reference,
+    require_sql_parsed_file,
     resolve_endpoint,
     statement_identifier,
     table_references,
 )
-from lightweight_lineage.dialects.base import DialectAdapter, ObjectDeclaration
+from lightweight_lineage.dialects.base import (
+    DialectAdapter,
+    ObjectDeclaration,
+    ParseResult,
+    ParsedFile,
+)
 
 _REDSHIFT_DYNAMIC_EXECUTE = re.compile(
     r"(?im)^[ \t]*EXECUTE(?:[ \t]+IMMEDIATE)?[ \t]+"
@@ -130,7 +138,7 @@ def _redshift_procedure_body(
 
 
 def _add_redshift_view_flows(
-    parsed_file: ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: GraphBuilder,
 ) -> None:
     for view in descendants(
@@ -157,7 +165,7 @@ def _add_redshift_view_flows(
 
 
 def _add_redshift_ctas_flows(
-    parsed_file: ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: GraphBuilder,
 ) -> None:
     for statement in descendants(parsed_file.tree, "create_table_as_statement"):
@@ -180,7 +188,7 @@ def _add_redshift_ctas_flows(
 
 
 def _add_redshift_external_table_flows(
-    parsed_file: ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: GraphBuilder,
 ) -> None:
     for statement in descendants(parsed_file.tree, "create_external_table_statement"):
@@ -208,7 +216,7 @@ def _add_redshift_external_table_flows(
 
 
 def _add_redshift_copy_flows(
-    parsed_file: ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: GraphBuilder,
 ) -> None:
     for statement in descendants(parsed_file.tree, "copy_statement"):
@@ -232,7 +240,7 @@ def _add_redshift_copy_flows(
 
 
 def _add_redshift_unload_flows(
-    parsed_file: ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: GraphBuilder,
     linter: Linter,
 ) -> None:
@@ -285,7 +293,7 @@ def _add_redshift_unload_flows(
 
 
 def _add_redshift_procedure_calls(
-    parsed_file: ParsedFile,
+    parsed_file: SqlParsedFile,
     builder: GraphBuilder,
     caller_id: str,
 ) -> None:
@@ -325,6 +333,7 @@ def _add_redshift_procedure_calls(
 
 
 class RedshiftAdapter(DialectAdapter):
+    source_extensions: tuple[str, ...] = (".sql",)
     object_declarations: tuple[ObjectDeclaration, ...] = (
         ("create_table_statement", "table", "table_reference"),
         ("create_table_as_statement", "table", "object_reference"),
@@ -334,34 +343,52 @@ class RedshiftAdapter(DialectAdapter):
         ("create_procedure_statement", "stored_procedure", "function_name"),
     )
 
+    def __init__(self) -> None:
+        self._linter = Linter(dialect="redshift")
+
+    def parse(self, source: str, path: str) -> ParseResult:
+        return parse_sql_source(source, path, self._linter)
+
+    def collect_declarations(
+        self,
+        parsed_file: ParsedFile,
+        builder: GraphBuilder,
+    ) -> None:
+        sql_file = require_sql_parsed_file(parsed_file)
+        collect_object_declarations(
+            sql_file,
+            builder,
+            self.object_declarations,
+        )
+
     def extract_flows(
         self,
         parsed_file: ParsedFile,
         builder: GraphBuilder,
-        linter: Linter,
     ) -> None:
-        _add_redshift_view_flows(parsed_file, builder)
-        _add_redshift_ctas_flows(parsed_file, builder)
-        _add_redshift_external_table_flows(parsed_file, builder)
-        _add_redshift_copy_flows(parsed_file, builder)
-        _add_redshift_unload_flows(parsed_file, builder, linter)
+        sql_file = require_sql_parsed_file(parsed_file)
+        _add_redshift_view_flows(sql_file, builder)
+        _add_redshift_ctas_flows(sql_file, builder)
+        _add_redshift_external_table_flows(sql_file, builder)
+        _add_redshift_copy_flows(sql_file, builder)
+        _add_redshift_unload_flows(sql_file, builder, self._linter)
 
-        procedures = descendants(parsed_file.tree, "create_procedure_statement")
+        procedures = descendants(sql_file.tree, "create_procedure_statement")
         for procedure in procedures:
             body = _redshift_procedure_body(
                 procedure,
-                parsed_file.path,
+                sql_file.path,
                 builder,
-                linter,
+                self._linter,
             )
             if body is None:
                 continue
             procedure_id, body_tree = body
-            procedure_file = ParsedFile(parsed_file.path, body_tree)
+            procedure_file = SqlParsedFile(sql_file.path, body_tree)
             add_dml_flows(procedure_file, builder, [], procedure_id)
             _add_redshift_procedure_calls(procedure_file, builder, procedure_id)
 
-        add_dml_flows(parsed_file, builder, [])
+        add_dml_flows(sql_file, builder, [])
 
 
 __all__ = ["RedshiftAdapter"]
