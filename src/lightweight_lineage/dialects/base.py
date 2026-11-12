@@ -22,7 +22,8 @@ class DialectAdapter(Protocol):
         self,
         parsed_file: ParsedFile,
         builder: GraphBuilder,
-    ) -> None: ...
+    ) -> None:
+        return None
 
     def extract_flows(
         self,

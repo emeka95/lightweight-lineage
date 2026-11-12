@@ -115,11 +115,7 @@ def analyze_repository(
         adapter.extract_flows(parsed_file, builder, linter)
         deadline.check()
 
-    return LineageGraph(
-        objects=list(builder.objects.values()),
-        edges=list(builder.edges.values()),
-        diagnostics=list(builder.diagnostics.values()),
-    )
+    return builder.to_graph()
 
 
 __all__ = ["analyze_repository"]

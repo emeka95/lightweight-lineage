@@ -12,6 +12,7 @@ from sqlfluff.core.parser import BaseSegment
 from lightweight_lineage.graph import (
     Diagnostic,
     LineageEdge,
+    LineageGraph,
     LineageObject,
 )
 from lightweight_lineage.options import ExplicitMapping
@@ -224,6 +225,27 @@ class _GraphBuilder:
             declaration_ids.append(node.id)
         return node
 
+    def add_synonym(self, name: str, target: str) -> None:
+        synonym_key = _normalized_name(name)
+        targets = self.synonyms.setdefault(synonym_key, [])
+        if _normalized_name(target) not in {
+            _normalized_name(value) for value in targets
+        }:
+            targets.append(target)
+
+    def find_declared_object_id(
+        self,
+        name: str,
+        object_type: str,
+    ) -> str | None:
+        for object_id in self.declarations.get(_normalized_name(name), []):
+            if self.objects[object_id].type == object_type:
+                return object_id
+        return None
+
+    def get_object(self, object_id: str) -> LineageObject | None:
+        return self.objects.get(object_id)
+
     def add_edge(
         self,
         source: LineageObject,
@@ -257,6 +279,13 @@ class _GraphBuilder:
             existing.evidence_file = file
             existing.line = line
             existing.column = column
+
+    def to_graph(self) -> LineageGraph:
+        return LineageGraph(
+            objects=list(self.objects.values()),
+            edges=list(self.edges.values()),
+            diagnostics=list(self.diagnostics.values()),
+        )
 
     def declared_resolutions(
         self,
@@ -574,7 +603,6 @@ class _GraphBuilder:
 GraphBuilder = _GraphBuilder
 ParsedFile = _ParsedFile
 Reference = _Reference
-
 
 def _unique_resolutions(values: list[_Resolution]) -> list[_Resolution]:
     unique: dict[str, _Resolution] = {}
@@ -921,23 +949,40 @@ def _add_procedure_calls(
             )
 
 
+add_bulk_insert_flows = _add_bulk_insert_flows
+add_data_flow = _add_data_flow
+add_dml_flows = _add_dml_flows
+add_procedure_calls = _add_procedure_calls
+add_view_flows = _add_view_flows
+descendants = _descendants
+first_direct = _first_direct
+location = _location
+literal_value = _literal_value
+normalized_name = _normalized_name
+procedure_spans = _procedure_spans
+reference = _reference
+resolve_endpoint = _resolve_endpoint
+statement_identifier = _statement_identifier
+table_references = _table_references
+
+
 __all__ = [
     "GraphBuilder",
     "ParsedFile",
     "Reference",
-    "_add_bulk_insert_flows",
-    "_add_data_flow",
-    "_add_dml_flows",
-    "_add_procedure_calls",
-    "_add_view_flows",
-    "_descendants",
-    "_first_direct",
-    "_location",
-    "_literal_value",
-    "_normalized_name",
-    "_procedure_spans",
-    "_reference",
-    "_resolve_endpoint",
-    "_statement_identifier",
-    "_table_references",
+    "add_bulk_insert_flows",
+    "add_data_flow",
+    "add_dml_flows",
+    "add_procedure_calls",
+    "add_view_flows",
+    "descendants",
+    "first_direct",
+    "location",
+    "literal_value",
+    "normalized_name",
+    "procedure_spans",
+    "reference",
+    "resolve_endpoint",
+    "statement_identifier",
+    "table_references",
 ]
