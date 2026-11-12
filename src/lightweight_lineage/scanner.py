@@ -1,4 +1,4 @@
-"""Deterministic discovery of SQL files in a repository."""
+"""Deterministic discovery of configured source files in a repository."""
 
 from __future__ import annotations
 
@@ -39,14 +39,21 @@ def _sort_key(value: str) -> tuple[str, str]:
 def scan_repository(
     root: str | Path,
     *,
+    extensions: tuple[str, ...] = (".sql",),
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     deadline: ScanDeadline | None = None,
 ) -> tuple[str, ...]:
-    """Return repository-relative POSIX paths for discovered .sql files.
+    """Return repository-relative paths for files matching configured suffixes.
 
     Directory traversal and results are sorted to make discovery deterministic.
     A timeout aborts the scan rather than returning a partial file list.
     """
+    if not extensions or any(
+        len(extension) < 2 or not extension.startswith(".")
+        for extension in extensions
+    ):
+        raise ValueError("extensions must contain suffixes such as '.sql'")
+    normalized_extensions = {extension.casefold() for extension in extensions}
     run_deadline = deadline or ScanDeadline.start(timeout_seconds)
 
     root_path = Path(root).resolve(strict=True)
@@ -70,7 +77,7 @@ def scan_repository(
 
         for filename in filenames:
             run_deadline.check()
-            if Path(filename).suffix.casefold() == ".sql":
+            if Path(filename).suffix.casefold() in normalized_extensions:
                 relative_path = (current_path / filename).relative_to(root_path)
                 discovered.append(relative_path.as_posix())
 

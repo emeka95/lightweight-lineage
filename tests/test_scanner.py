@@ -24,6 +24,18 @@ class ScanRepositoryTests(unittest.TestCase):
                 ("A.SQL", "nested/b.sql", "z.sql"),
             )
 
+    def test_discovers_only_configured_extensions_case_insensitively(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "source.TXT").write_text("text", encoding="utf-8")
+            (root / "query.sql").write_text("SELECT 1;", encoding="utf-8")
+            (root / "notes.txt").write_text("text", encoding="utf-8")
+
+            self.assertEqual(
+                scan_repository(root, extensions=(".txt",)),
+                ("notes.txt", "source.TXT"),
+            )
+
     def test_discovers_thousands_of_files_deterministically(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -57,6 +69,16 @@ class ScanRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             with self.assertRaisesRegex(ValueError, "greater than zero"):
                 scan_repository(temporary_directory, timeout_seconds=0)
+
+    def test_rejects_invalid_source_extensions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            for extensions in ((), ("sql",), (".",)):
+                with self.subTest(extensions=extensions):
+                    with self.assertRaisesRegex(ValueError, "suffixes"):
+                        scan_repository(
+                            temporary_directory,
+                            extensions=extensions,
+                        )
 
     def test_rejects_a_file_as_the_scan_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
